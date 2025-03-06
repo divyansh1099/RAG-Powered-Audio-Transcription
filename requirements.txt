@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+streamlit
+requests
+openai
+langchain
+chromadb
+pydub
+python-dotenv
+python-multipart
