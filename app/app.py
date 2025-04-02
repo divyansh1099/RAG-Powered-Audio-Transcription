@@ -54,7 +54,7 @@ if uploaded_file and st.button("🚀 Transcribe and Generate Audio"):
         result = transcribe_audio(uploaded_file, language, accent)
 
         if result:
-            transcription = result["transcription"]
+            transcription = result["transcript"]
             audio_output = base64.b64decode(result["audio_output"])
 
             st.success("✅ Processing complete!")

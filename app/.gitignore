@@ -14,3 +14,7 @@ __pycache__/
 
 # Streamlit
 .streamlit/
+
+docuemtation/
+# Ignore documentation files
+# Ignore all files in the documentation directory
