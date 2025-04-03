@@ -1,0 +1,25 @@
+# Ignore environment files
+.env
+config.env
+
+# Python
+__pycache__/
+*.pyc
+
+# VSCode
+.vscode/
+
+# OS
+.DS_Store
+
+# Streamlit
+.streamlit/
+
+docuemtation/
+# Ignore documentation files
+# Ignore all files in the documentation directory
+
+
+*.wav
+*.mp3
+*.m4a
