@@ -8,3 +8,6 @@ chromadb
 pydub
 python-dotenv
 python-multipart
+bcrypt==4.0.1
+python-jose[cryptography]
+passlib[bcrypt]

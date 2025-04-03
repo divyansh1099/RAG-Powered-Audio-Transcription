@@ -18,3 +18,8 @@ __pycache__/
 docuemtation/
 # Ignore documentation files
 # Ignore all files in the documentation directory
+
+
+*.wav
+*.mp3
+*.m4a

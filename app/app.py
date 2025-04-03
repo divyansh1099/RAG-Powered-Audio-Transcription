@@ -1,69 +1,121 @@
 import streamlit as st
 import requests
-import base64
-import time
 
-# Streamlit app config
-st.set_page_config(page_title="🎙️ RAG Audio Transcription", page_icon="🎧", layout="centered")
+API_BASE = "http://localhost:8000"
 
-st.title("🎙️ RAG-Powered Audio Transcription with Domain Knowledge")
+st.set_page_config(page_title="Audio Dubbing App", page_icon="🎙️", layout="centered")
+st.title("🎙️ Audio Dubbing App")
+
 st.markdown("""
-Upload an audio file, select your **language** and **accent**, and receive an enriched Hindi transcription with synthesized audio output.
-""")
+    <style>
+        /* Make all text inputs wider */
+        input[type="text"], input[type="password"] {
+            width: 100% !important;
+            padding: 10px;
+            font-size: 16px;
+        }
 
-# Sidebar settings
-with st.sidebar:
-    st.header("⚙️ Settings")
-    language = st.selectbox("Select Target Language", ["English", "Hindi"])
-    accent = st.selectbox("Select Accent", ["Neutral", "Indian", "British"])
+        /* Center content */
+        .block-container {
+            max-width: 700px;
+            margin: auto;
+        }
 
-# Upload audio file
-uploaded_file = st.file_uploader("🎤 Upload your audio file", type=["wav", "mp3", "m4a"])
+        /* Customize buttons */
+        button[kind="primary"] {
+            background-color: #4CAF50;
+            color: white;
+        }
 
-MAX_RETRIES = 3  # Number of retries in case of backend failures
+        /* Headings */
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
+# Init session state
+if "token" not in st.session_state:
+    st.session_state.token = None
+if "mode" not in st.session_state:
+    st.session_state.mode = "Login"
+if "email" not in st.session_state:
+    st.session_state.email = ""
+if "password" not in st.session_state:
+    st.session_state.password = ""
 
-def transcribe_audio(file, language, accent):
-    """
-    Sends the uploaded audio, language, and accent to the FastAPI backend for processing.
-    """
-    form_data = {"language": language, "accent": accent}
-    for attempt in range(MAX_RETRIES):
+# --------------------------------------------------
+# 🟡 LAYOUT: LOGIN / REGISTER LANDING PAGE
+# --------------------------------------------------
+if not st.session_state.token:
+    st.subheader("🔐 Please log in or register")
+
+    st.radio("Mode", ["Login", "Register"], key="mode", horizontal=True)
+
+    st.session_state.email = st.text_input("Email", value=st.session_state.email)
+    st.session_state.password = st.text_input("Password", type="password", value=st.session_state.password)
+
+    if st.button("Submit"):
+        endpoint = "/auth/login" if st.session_state.mode == "Login" else "/auth/register"
         try:
-            response = requests.post(
-                "http://localhost:8000/transcribe/",
-                data=form_data,
-                files={"file": file},
-                timeout=120  # Timeout in seconds
-            )
-            if response.status_code == 200:
-                return response.json()
+            res = requests.post(API_BASE + endpoint, json={
+                "email": st.session_state.email,
+                "password": st.session_state.password
+            })
+            data = res.json()
+            if res.status_code == 200:
+                if "access_token" in data:
+                    st.session_state.token = data["access_token"]
+                    st.success("✅ Logged in successfully!")
+                    st.rerun()
+                else:
+                    st.success("✅ Registered! Now switch to login.")
             else:
-                st.warning(f"Attempt {attempt + 1}: Received error {response.status_code}. Retrying...")
-                time.sleep(2)
-        except requests.exceptions.RequestException as e:
-            st.warning(f"Attempt {attempt + 1}: Request failed ({e}). Retrying...")
-            time.sleep(2)
-    st.error("❌ Failed after multiple attempts. Please try again later.")
-    return None
+                st.error(f"❌ {data.get('detail', 'Error occurred')}")
+        except Exception as e:
+            st.error(f"❌ Request failed: {e}")
 
+    st.stop()  # prevent the rest of the app from rendering
+else:
+    # --------------------------------------------------
+    # ✅ LOGGED IN: Show Transcription & Dubbing App
+    # --------------------------------------------------
+    st.success("✅ Logged in")
 
-# Button to trigger processing
-if uploaded_file and st.button("🚀 Transcribe and Generate Audio"):
-    with st.spinner("Processing your audio... please wait."):
-        result = transcribe_audio(uploaded_file, language, accent)
+    if st.button("Logout"):
+        st.session_state.token = None
+        st.rerun()
 
-        if result:
-            transcription = result["transcript"]
-            audio_output = base64.b64decode(result["audio_output"])
+    st.subheader("🎧 Upload Audio for Transcription & Dubbing")
+    uploaded_file = st.file_uploader("Upload audio file (.wav, .mp3, .m4a)", type=["wav", "mp3", "m4a"])
 
-            st.success("✅ Processing complete!")
+    if uploaded_file and st.button("Transcribe & Dub"):
+        with st.spinner("Processing..."):
+            try:
+                files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
+                headers = {"Authorization": f"Bearer {st.session_state.token}"}
+                res = requests.post(API_BASE + "/transcribe", files=files, headers=headers)
 
-            st.subheader("📝 Hindi Transcription")
-            st.code(transcription, language="markdown")
+                if res.status_code == 200:
+                    result = res.json()
+                    st.success("✅ Done!")
 
-            st.subheader("🔊 Synthesized Hindi Audio")
-            st.audio(audio_output, format="audio/wav")
+                    st.markdown("### 📝 English Transcript")
+                    st.write(result["transcript"])
 
-        else:
-            st.error("Failed to process the audio. Please check the backend logs for more details.")
+                    st.markdown("### 🧠 Inferred Topic")
+                    st.write(result["topic"])
+
+                    st.markdown("### 📚 RAG Context")
+                    st.info(result["rag_context_snippet"])
+
+                    st.markdown("### 🗣️ Hindi Transcript")
+                    st.write(result["hindi_transcript"])
+
+                    st.markdown("### 🔊 Dubbed Audio")
+                    st.audio(result["audio_output"], format="audio/mp3")
+                else:
+                    st.error(f"❌ Error {res.status_code}: {res.text}")
+            except Exception as e:
+                st.error(f"❌ Failed: {e}")
