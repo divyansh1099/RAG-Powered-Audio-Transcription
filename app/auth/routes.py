@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr
 from app.auth.utils import hash_password, verify_password, create_access_token
 from app.db.mongodb import users_collection
-from bson import ObjectId
+
 
 router = APIRouter()
 
@@ -32,8 +32,9 @@ async def login(user: UserLogin):
     if not record or not verify_password(user.password, record["password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password.")
     
+    # ✅ Store email in the token's `sub` field
     token = create_access_token({
-        "sub": str(record["_id"]),
-        "email": user.email
+        "sub": user.email
     })
+
     return {"access_token": token, "token_type": "bearer"}

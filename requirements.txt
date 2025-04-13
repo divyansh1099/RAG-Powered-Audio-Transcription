@@ -11,3 +11,7 @@ python-multipart
 bcrypt==4.0.1
 python-jose[cryptography]
 passlib[bcrypt]
+beautifulsoup4
+watchdog
+langchain-openai
+huggingface_hub
