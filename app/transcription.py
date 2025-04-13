@@ -1,66 +1,160 @@
-from io import BytesIO
-from pydub import AudioSegment
-from pydub.exceptions import CouldntDecodeError
-from openai import OpenAI
+import os
 import base64
+import logging
+import time
+import requests
+from io import BytesIO
+from typing import List, Dict
+from pydub import AudioSegment
+from openai import OpenAI
+from dotenv import load_dotenv
 
-client = OpenAI()
+# Load environment variables
+load_dotenv()
+ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-def transcribe_audio_with_whisper(audio_bytes):
-    """
-    Converts raw bytes to WAV and transcribes using Whisper.
-    """
-    try:
-        audio = AudioSegment.from_file(BytesIO(audio_bytes))
-        buffer = BytesIO()
-        audio.export(buffer, format="wav")
-        buffer.name = "audio.wav"
-        buffer.seek(0)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-        transcript = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=buffer
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logging.basicConfig(format='%(levelname)s:%(name)s:%(message)s')
+
+AUDIO_CONVERT_FORMAT = "wav"
+TTS_MODEL = "tts-1-hd"
+voice_map = {
+    "SPEAKER_0": "nova",
+    "SPEAKER_1": "shimmer",
+    "SPEAKER_2": "echo"
+}
+
+ASSEMBLY_HEADERS = { "authorization": ASSEMBLYAI_API_KEY }
+
+def upload_audio_to_assemblyai(audio_bytes: bytes) -> str:
+    response = requests.post(
+        "https://api.assemblyai.com/v2/upload",
+        headers=ASSEMBLY_HEADERS,
+        data=audio_bytes
+    )
+    response.raise_for_status()
+    return response.json()["upload_url"]
+
+def transcribe_with_assemblyai(audio_bytes: bytes) -> List[Dict]:
+    logger.info("📤 Uploading audio to AssemblyAI...")
+    upload_url = upload_audio_to_assemblyai(audio_bytes)
+
+    payload = {
+        "audio_url": upload_url,
+        "speaker_labels": True
+    }
+
+    response = requests.post(
+        "https://api.assemblyai.com/v2/transcript",
+        headers=ASSEMBLY_HEADERS,
+        json=payload
+    )
+    response.raise_for_status()
+    transcript_id = response.json()["id"]
+
+    polling_endpoint = f"https://api.assemblyai.com/v2/transcript/{transcript_id}"
+    logger.info("⏳ Waiting for transcription to complete...")
+    while True:
+        polling_response = requests.get(polling_endpoint, headers=ASSEMBLY_HEADERS)
+        polling_data = polling_response.json()
+        if polling_data["status"] == "completed":
+            logger.info("✅ Transcription and diarization complete.")
+            return polling_data.get("utterances", [])
+        elif polling_data["status"] == "error":
+            raise Exception(f"Transcription failed: {polling_data['error']}")
+        time.sleep(5)
+
+def translate_segments_with_gpt(segments: List[Dict], context_snippet: str = "", glossary: str = "", target_lang: str = "hindi") -> List[Dict]:
+    logger.info("🌐 Translating segments with GPT-4o...")
+    translated = []
+    for idx, seg in enumerate(segments):
+        prompt = f"""**Role**: Expert Translator
+**Task**: Translate the following English text to {target_lang.capitalize()}.
+**Context**: {context_snippet}
+**Glossary**: Preserve these English terms - {glossary}
+
+**Text**:
+{seg['text']}"""
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a professional translator."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3
         )
-        return transcript.text
+        translated_text = response.choices[0].message.content.strip()
+        seg["translated_text"] = translated_text
+        translated.append(seg)
+        logger.info(f"📝 Translated segment {idx+1}/{len(segments)}")
+    logger.info("✅ All segments translated.")
+    return translated
 
-    except CouldntDecodeError:
-        raise ValueError("❌ Could not decode audio file — invalid or unsupported format.")
-    except Exception as e:
-        raise ValueError(f"❌ Whisper transcription failed: {str(e)}")
+def dub_translated_segments(translated_segments: List[Dict]) -> Dict:
+    logger.info("🔊 Generating multi-voice dubbed audio...")
+    final_audio = AudioSegment.empty()
 
-def dub_audio_to_hindi(english_transcript, glossary, context_snippet=""):
-    """
-    Translates the transcript into Hindi with glossary support and generates TTS audio.
-    """
-    # Step 1: Translate using GPT-4o
-    prompt = (
-        f"You are a translation assistant. Use the following background context to improve the translation:\n\n"
-        f"{context_snippet}\n\n"
-        f"Translate the English transcript below to Hindi. Retain the following glossary terms in English: {glossary}.\n"
-        f"Output must preserve the meaning and be suitable for spoken audio."
-    )
+    # Cycle of voices to assign dynamically
+    voice_cycle = ["nova", "shimmer", "echo", "fable", "onyx"]
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": english_transcript}
-        ]
-    )
+    # Create a speaker-to-voice map dynamically
+    unique_speakers = list({seg["speaker"] for seg in translated_segments})
+    speaker_voice_map = {speaker: voice_cycle[i % len(voice_cycle)] for i, speaker in enumerate(unique_speakers)}
 
-    translated_text = response.choices[0].message.content
+    for idx, seg in enumerate(translated_segments):
+        speaker = seg["speaker"]
+        voice = speaker_voice_map.get(speaker, "nova")
 
-    # Step 2: Generate Hindi audio (mp3)
-    audio_response = client.audio.speech.create(
-        model="tts-1",
-        voice="alloy",
-        input=translated_text,
-        response_format="mp3"
-    )
-    audio_data = audio_response.content
-    audio_base64 = base64.b64encode(audio_data).decode("utf-8")
+        # TTS generation
+        audio_response = client.audio.speech.create(
+            model=TTS_MODEL,
+            voice=voice,
+            input=seg["translated_text"],
+            response_format="mp3",
+            speed=0.95
+        )
+        mp3_audio = BytesIO(audio_response.content)
+        wav_chunk = AudioSegment.from_mp3(mp3_audio).set_frame_rate(44100)
+        final_audio += wav_chunk
+
+        logger.info(f"🔈 Dubbed segment {idx+1}/{len(translated_segments)} with voice: {voice} for speaker: {speaker}")
+
+    # Encode full audio as base64 WAV
+    with BytesIO() as buffer:
+        final_audio.export(buffer, format=AUDIO_CONVERT_FORMAT)
+        audio_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+    logger.info("✅ Dubbing complete.")
+    return {"hindi_audio_base64": audio_base64}
+
+
+def format_speaker_dubbing_response(translated_segments: List[Dict], audio_base64: str) -> Dict:
+    logger.info("📦 Formatting final response...")
 
     return {
-        "hindi_transcript": translated_text,
-        "hindi_audio_base64": audio_base64
+        "transcript": [
+            {
+                "speaker": seg["speaker"],
+                "original_text": seg["text"],
+                "translated_text": seg["translated_text"],
+                "start": seg["start"],
+                "end": seg["end"]
+            }
+            for seg in translated_segments
+        ],
+        "hindi_transcript": " ".join([seg["translated_text"] for seg in translated_segments]),
+        "topic": "TEMP_TOPIC",  # You can pass this as a param if needed
+        "rag_context_snippet": "TEMP_CONTEXT",  # Same here
+        "audio_output": audio_base64  # just the base64 string, not the full data URI
     }
+
+
+
+def full_assemblyai_transcription_pipeline(audio_bytes: bytes) -> Dict:
+    logger.info("🚀 Starting AssemblyAI-powered transcription pipeline...")
+    segments = transcribe_with_assemblyai(audio_bytes)
+    return segments  # to be translated and dubbed downstream
