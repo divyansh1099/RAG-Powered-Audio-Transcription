@@ -5,7 +5,7 @@ import base64
 from datetime import datetime
 
 # --- Setup
-st.set_page_config(page_title="DubbGPT | Dashboard", layout="wide")
+st.set_page_config(page_title="EchoVerse | Dashboard", layout="wide")
 
 if "token" not in st.session_state or "username" not in st.session_state:
     st.error("Unauthorized. Please log in from the homepage.")
@@ -69,16 +69,15 @@ for idx, row in df.iterrows():
         st.download_button("📄 TXT", txt_data, file_name=f"{row['topic']}.txt", key=f"txt_{idx}")
 
     with cols[4]:
-        try:
-            audio_data = base64.b64decode(row["dubbed_audio_b64"])
-            st.audio(audio_data, format="audio/mp3")
-        except Exception as e:
-            st.warning("⚠️ Audio missing")
+        audio_id = str(row.get("audio_id", ""))
+        if audio_id:
+            st.audio(f"http://localhost:8000/audio/{audio_id}", format="audio/wav")
+        else:
+            st.warning("⚠️ Audio ID not found.")
 
     with cols[5]:
-        if "dubbed_audio_b64" in row:
-            b64 = base64.b64encode(audio_data).decode()
+        if audio_id:
             st.markdown(
-                f'<a href="data:audio/mp3;base64,{b64}" download="dubbed_audio.mp3">📥</a>',
+                f'[📥 Download Audio](http://localhost:8000/audio/download/{audio_id})',
                 unsafe_allow_html=True
             )

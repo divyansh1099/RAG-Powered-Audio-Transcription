@@ -4,11 +4,6 @@ from bs4 import BeautifulSoup
 from tempfile import TemporaryDirectory
 from fastapi import FastAPI, UploadFile, HTTPException, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import Chroma
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.docstore.document import Document
 from app.transcription import (
     full_assemblyai_transcription_pipeline,
     translate_segments_with_gpt,
@@ -27,7 +22,9 @@ import asyncio
 import base64
 import time
 from concurrent.futures import ThreadPoolExecutor
-import urllib.parse
+from fastapi.responses import StreamingResponse
+from bson import ObjectId
+from bson.errors import InvalidId
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
@@ -119,6 +116,7 @@ async def process_multispeaker_audio(
 
                 # Save audio to GridFS
                 audio_binary = base64.b64decode(audio_output["dubbed_audio_base64"])
+                print(audio_binary[:10]) 
                 audio_id = fs.put(audio_binary, filename=f"{username}_{uuid.uuid4().hex}.wav")
 
                 response = format_speaker_dubbing_response(
@@ -149,3 +147,24 @@ async def process_multispeaker_audio(
     except Exception as e:
         logger.error(f"❌ Error in multi-speaker route: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/audio/{audio_id}", tags=["Audio"])
+def stream_audio(audio_id: str):
+    try:
+        file = fs.get(ObjectId(audio_id))  # fs = GridFS(db)
+        return StreamingResponse(file, media_type="audio/wav")
+    except (InvalidId, Exception) as e:
+        raise HTTPException(status_code=404, detail=f"Audio not found: {e}")
+
+
+@app.get("/audio/download/{audio_id}", tags=["Audio"])
+def download_audio(audio_id: str):
+    try:
+        file = fs.get(ObjectId(audio_id))
+        return StreamingResponse(
+            file,
+            media_type="audio/wav",
+            headers={"Content-Disposition": f"attachment; filename={file.filename}"}
+        )
+    except (InvalidId, Exception) as e:
+        raise HTTPException(status_code=404, detail=f"Audio not found: {e}")

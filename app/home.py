@@ -3,13 +3,13 @@ import requests
 from auth.session import init_session
 init_session()
 
-st.set_page_config(page_title="DubbGPT | Login", layout="centered")
+st.set_page_config(page_title="EchoVerse | Login", layout="centered")
 
 # 🔐 Auto-redirect if already logged in
 if "token" in st.session_state and st.session_state.token:
     st.switch_page("pages/1_dashboard.py")
 
-st.markdown("## 🔐 Welcome to DubbGPT")
+st.markdown("## 🔐 Welcome to EchoVerse")
 st.markdown("#### Login or Register to continue")
 
 def clear_inputs():

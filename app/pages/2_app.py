@@ -11,8 +11,8 @@ def load_lottie_url(url):
         return None
     return response.json()
 
-st.set_page_config(page_title="Audio Dubbing App", page_icon="🎙️", layout="centered")
-st.title("🎙️ Audio Dubbing App")
+st.set_page_config(page_title="EchoVerse", page_icon="🎙️", layout="centered")
+st.title("🎙️ EchoVerse")
 
 # 🛡️ Require Login
 if "token" not in st.session_state or not st.session_state.token:
