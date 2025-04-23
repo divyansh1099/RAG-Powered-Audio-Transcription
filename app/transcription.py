@@ -39,14 +39,15 @@ def upload_audio_to_assemblyai(audio_bytes: bytes) -> str:
     response.raise_for_status()
     return response.json()["upload_url"]
 
-def transcribe_with_assemblyai(audio_bytes: bytes) -> List[Dict]:
-    logger.info("📤 Uploading audio to AssemblyAI...")
+def transcribe_with_assemblyai(audio_bytes: bytes, input_lang: str = "en") -> List[Dict]:
+    logger.info(f"📤 Uploading audio to AssemblyAI for input language: {input_lang}")
     upload_url = upload_audio_to_assemblyai(audio_bytes)
 
     payload = {
-        "audio_url": upload_url,
-        "speaker_labels": True
-    }
+    "audio_url": upload_url,
+    "speaker_labels": True,
+    "language_code": input_lang  # NEW: specify transcription language
+}
 
     response = requests.post(
         "https://api.assemblyai.com/v2/transcript",
@@ -68,8 +69,14 @@ def transcribe_with_assemblyai(audio_bytes: bytes) -> List[Dict]:
             raise Exception(f"Transcription failed: {polling_data['error']}")
         time.sleep(5)
 
-def translate_segments_with_gpt(segments: List[Dict], context_snippet: str = "", glossary: str = "", target_lang: str = "hindi") -> List[Dict]:
+def translate_segments_with_gpt(target_lang: str, segments: List[Dict], context_snippet: str = "", glossary: str = "") -> List[Dict]:
     logger.info("🌐 Translating segments with GPT-4o...")
+    
+    # Defensive programming: ensure context is a string
+    if context_snippet is None:
+        context_snippet = ""
+        logger.warning("⚠️ Received None context_snippet in translate_segments_with_gpt")
+    
     translated = []
     for idx, seg in enumerate(segments):
         prompt = f"""**Role**: Expert Translator
@@ -129,10 +136,10 @@ def dub_translated_segments(translated_segments: List[Dict]) -> Dict:
         audio_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     logger.info("✅ Dubbing complete.")
-    return {"hindi_audio_base64": audio_base64}
+    return {"dubbed_audio_base64": audio_base64}
 
 
-def format_speaker_dubbing_response(translated_segments: List[Dict], audio_base64: str) -> Dict:
+def format_speaker_dubbing_response(translated_segments: List[Dict], audio_base64: str, input_lang: str, output_lang: str, topic: str = "TEMP_TOPIC", context_snippet: str = "TEMP_CONTEXT") -> Dict:
     logger.info("📦 Formatting final response...")
 
     return {
@@ -146,15 +153,31 @@ def format_speaker_dubbing_response(translated_segments: List[Dict], audio_base6
             }
             for seg in translated_segments
         ],
-        "hindi_transcript": " ".join([seg["translated_text"] for seg in translated_segments]),
-        "topic": "TEMP_TOPIC",  # You can pass this as a param if needed
-        "rag_context_snippet": "TEMP_CONTEXT",  # Same here
+        f"{output_lang.lower()}_transcript": " ".join([seg["translated_text"] for seg in translated_segments]),
+        "topic": topic,
+        "rag_context_snippet": context_snippet,
         "audio_output": audio_base64  # just the base64 string, not the full data URI
     }
 
 
+def full_assemblyai_transcription_pipeline(audio_bytes: bytes, input_lang: str, output_lang: str) -> List[Dict]:
+    """
+    Transcribes audio using AssemblyAI with the specified input language.
+    Returns the raw transcribed segments without translation or dubbing.
+    
+    Args:
+        audio_bytes: Binary audio data
+        input_lang: Source language code (e.g., 'en', 'es')
+        output_lang: Target language code (not used in this function but kept for API consistency)
+        
+    Returns:
+        List of transcribed segments with speaker diarization
+    """
+    logger.info(f"🚀 Starting full pipeline: input_lang={input_lang}, output_lang={output_lang}")
 
-def full_assemblyai_transcription_pipeline(audio_bytes: bytes) -> Dict:
-    logger.info("🚀 Starting AssemblyAI-powered transcription pipeline...")
-    segments = transcribe_with_assemblyai(audio_bytes)
-    return segments  # to be translated and dubbed downstream
+    # Transcribe with input language
+    segments = transcribe_with_assemblyai(audio_bytes, input_lang=input_lang)
+    
+    # Return just the segments without any further processing
+    return segments
+
